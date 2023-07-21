@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+
+<style>
+.button {
+  background-color: #4CAF50;
+  border: none;
+  color: white;
+  padding: 15px 32px;
+  text-align: center;
+  text-decoration: none;
+  display: inline-block;
+  font-size: 16px;
+  margin: 4px 2px;
+  cursor: pointer;
+}
+.entry-footer .log_display p {
+   word-wrap: break-word;
+}
+</style>
+
+<script type="text/javascript">
+    function submit(endpoint) {
+        var xhr = new XMLHttpRequest();
+        xhr.open('get', endpoint, true);
+        xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8');
+        xhr.send();
+    }
+
+    function getLogs() {
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function () {
+            document.getElementById("log_display").innerHTML = xhr.response
+        }
+        xhr.open('get', 'logs', true);
+        xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8');
+        xhr.send();
+    }
+
+    function openTab(evt, cityName) {
+      var i, tabcontent, tablinks;
+      tabcontent = document.getElementsByClassName("tabcontent");
+      for (i = 0; i < tabcontent.length; i++) {
+        tabcontent[i].style.display = "none";
+      }
+      tablinks = document.getElementsByClassName("tablinks");
+      for (i = 0; i < tablinks.length; i++) {
+        tablinks[i].className = tablinks[i].className.replace(" active", "");
+      }
+      document.getElementById(cityName).style.display = "block";
+      evt.currentTarget.className += " active";
+}
+
+
+</script>
+<body>
+
+<div class="tab">
+  <button class="tablinks" onclick="openTab(event, 'Controller')">Controller</button>
+  <button class="tablinks" onclick="openTab(event, 'Logs')">Logs</button>
+</div>
+
+<div id="Controller" class="tabcontent">
+<h1>Virtual controller</h1>
+    <div>
+        <button class="button" type="button" onclick="submit('unlock')">UNLOCK</button>
+    </div>
+    <div>
+        <button class="button" type="button" onclick="submit('start')">RUN</button>
+    </div>
+</div>
+
+<div id="Logs" class="tabcontent">
+<h1>Virtual controller</h1>
+    <div>
+        <button class="button" type="button" onclick="getLogs()">Get Logs</button>
+    </div>
+    <div>
+        <p id="log_display"></p>
+    </div>
+</div>
+ 
+</body>
+<script>
+document.getElementById("Controller").click();
+</script>
+</html>
+

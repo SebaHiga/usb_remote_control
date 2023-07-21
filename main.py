@@ -1,6 +1,6 @@
 from adafruit_hid.keyboard import Keyboard
 from adafruit_hid.keycode import Keycode
-from adafruit_httpserver import Server, Request, Response
+from adafruit_httpserver import Server, Request, Response, FileResponse
 import adafruit_logging as log
 import time
 import re
@@ -13,6 +13,8 @@ import time
 import wifi
 import socketpool
 
+DEBUG_LOCAL = True
+
 
 SESSION_MAX_TIME = 60 * 60 * 18
 #SESSION_MAX_TIME = 60
@@ -24,7 +26,7 @@ BT_A_PIN = board.GP5
 BT_B_PIN = board.GP4
 BT_C_PIN = board.GP3
 BT_D_PIN = board.GP2
-BUZZER_PIN = board.GP12
+BUZZER_PIN = board.GP11
 
 class Context:
     def __init__(self):
@@ -44,6 +46,28 @@ ANNOUNCE_DISARM = 2
 ANNOUNCE_TEST = 3
 BUZZER_DC_ON = 2**15 
 BUZZER_DC_OFF = 0
+
+class Logger:
+    def __init__(self):
+        self.content = []
+
+    def print(self, content):
+        print(content)
+        self.content.append(content)
+
+        if len(self.content) > 50:
+            self.content.pop(0)
+
+    def get_logs(self):
+        ret = ""
+
+        for c in reversed(self.content):
+            ret += c + '<br>'
+
+        print(ret)
+        return ret
+
+log = Logger()
 
 class Buzzer:
     def __init__(self):
@@ -84,23 +108,23 @@ class Notificator:
             self.buzzer.play('G', 3, 0.05)
             self.buzzer.play('G', 4, 0.05)
         if type is ANNOUNCE_ARM:
-            self.buzzer.play('G', 3, 0.1)
+            self.buzzer.play('B', 4, 0.1)
             self.buzzer.wait(0.1)
-            self.buzzer.play('G', 3, 0.1)
-            self.buzzer.play('G', 4, 0.1)
+            self.buzzer.play('B', 4, 0.1)
+            self.buzzer.wait(0.1)
+            self.buzzer.play('B', 4, 0.1)
         if type is ANNOUNCE_DISARM:
             self.buzzer.play('F', 3, 0.5)
             self.buzzer.wait(0.1)
             self.buzzer.play('F', 3, 0.5)            
-        if type is ANNOUNCE_TEST:
-            self.buzzer.play('F#', 4, 0.05)
-            self.buzzer.play('G', 4, 0.05)
             
 class SessionHandler(HandlerBase):
     def __init__(self, context, notificator):
         self.context = context
         self.combination_pressed = False
         self.notificator = notificator
+        self.notificator.announce(ANNOUNCE_INIT)
+
 
     def reset_session(self):
         self.context.session_time = time.time()
@@ -111,26 +135,24 @@ class SessionHandler(HandlerBase):
         self.combination_pressed = button_a is True and button_d is True
 
     def run(self):
-        self.notificator.announce(ANNOUNCE_INIT)
-
         delta = time.time() - self.context.session_time
 
         if self.context.session_active is True:
 
             if delta > SESSION_MAX_TIME:
-                print(f'Session expired')
+                log.print(f'Session expired')
                 self.notificator.announce(ANNOUNCE_DISARM)
                 self.context.session_active = False
 
             if self.combination_pressed:
                 time.sleep(SESSION_MAX_TIME_PRESSED)
                 if self.combination_pressed:
-                    print("Force exit session")
+                    log.print("Force exit session")
                     self.notificator.announce(ANNOUNCE_DISARM)
                     self.context.session_active = False
         else:
             if self.combination_pressed:
-                print("Activating session")
+                log.print("Activating session")
                 self.notificator.announce(ANNOUNCE_ARM)
                 self.context.session_time = time.time()
                 self.context.session_active = True
@@ -164,22 +186,23 @@ class ControlHandler(HandlerBase):
             if not (button_a ^ button_b ^ button_c ^ button_d):
                 return
 
-            print('Received uncombined keypress')
-
             if button_a:
                 self.performSingleKeyStroke(Keycode.SPACEBAR)
+                log.print("Pressing A")
             elif button_b:
                 self.performSingleKeyStroke(Keycode.RIGHT_ARROW)
+                log.print("Pressing B")
             elif button_c:
                 self.performSingleKeyStroke(Keycode.LEFT_ARROW)
+                log.print("Pressing C")
             elif button_d:
                 self.performSingleKeyStroke(Keycode.P)
+                log.print("Pressing D")
 
             self.state = self.STATE_PRESSED
     
         elif self.state == self.STATE_PRESSED:
             if vt is not True:
-                print('Key depressed, changing state to idle')
                 self.state = self.STATE_IDLE  
 
 class ButtonHandler:
@@ -222,28 +245,58 @@ class ButtonHandler:
           
 
 class ServerHandler:
-    def __init__(self):
+    def __init__(self, context):
+        self.observers = []
+        self.context = context
+
         try:
-            if not wifi.radio.ap_active:
-                wifi.radio.start_ap("apabcdef", "rpipico1234")
+            if DEBUG_LOCAL:
+                wifi.radio.connect("ATR", "igualnohayinternet")
+                
+            else:
+                if not wifi.radio.ap_active:
+                    wifi.radio.start_ap("apabcdef", "rpipico1234")
 
             self.pool = socketpool.SocketPool(wifi.radio)
             self.server = Server(self.pool, "/static", debug=True)
         except Exception as e:
-            print(f'Could get AP or WiFi module ready: {e}')
+            log.print(f'Could get AP or WiFi module ready: {e}')
 
-        self.server.start(str(wifi.radio.ipv4_address_ap))
-        print(f'Serving Access Point at {wifi.radio.ipv4_address_ap}')
+        address = wifi.radio.ipv4_address_ap if DEBUG_LOCAL is False else wifi.radio.ipv4_address
+        print(address)
+        self.server.start(str(address))
 
         @self.server.route("/")
         def base(request: Request):
-            """
-            Serve a default static plain text message.
-            """
-            return Response(request, "Hello from the CircuitPython HTTP Server!")
+            return FileResponse(request, filename="index.html", root_path="www")
+
+        @self.server.route("/start")
+        def start(request: Request):
+            self.notify_observers((True, True, False, False, False))
+
+            return Response(request, "ok")
+
+        @self.server.route("/unlock")
+        def start(request: Request):
+            self.session_time = time.time()
+            self.session_active = True
+            self.notify_observers((True, True, False, False, True))
+
+            return Response(request, "ok")
+
+        @self.server.route("/logs")
+        def start(request: Request):
+            return Response(request, log.get_logs())
 
     def run(self):
         self.server.poll()
+
+    def subscribe_observer(self, observer):
+        self.observers.append(observer)
+
+    def notify_observers(self, key_combinations):
+        for observer in self.observers:
+            observer.on_notify(key_combinations)
     
 def main(): 
     context = Context()
@@ -251,10 +304,13 @@ def main():
     button_handler = ButtonHandler(context)
     session_handler = SessionHandler(context, notificator)
     control_handler = ControlHandler(context)
-    server_handler = ServerHandler()
+    server_handler = ServerHandler(context)
 
     button_handler.subscribe_observer(session_handler)
     button_handler.subscribe_observer(control_handler)
+
+    server_handler.subscribe_observer(session_handler)
+    server_handler.subscribe_observer(control_handler)
 
     while True:
         try:
@@ -262,8 +318,6 @@ def main():
             button_handler.run()
             server_handler.run()
         except Exception as e:
-            print(f"E: {e}")
-            pass
-
+            log.print(f"Exception: {e}")
 
 main()

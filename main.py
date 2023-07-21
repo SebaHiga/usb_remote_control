@@ -13,8 +13,7 @@ import time
 import wifi
 import socketpool
 
-DEBUG_LOCAL = True
-
+DEBUG_LOCAL = False
 
 SESSION_MAX_TIME = 60 * 60 * 18
 #SESSION_MAX_TIME = 60
@@ -89,6 +88,23 @@ class Buzzer:
             'A#': 58,
             'B': 61
         }
+
+        self.morse = {
+            'A': [".", "-"],
+            'B': ["-", ".", ".", "."],
+            'C': ["-", ".", "-", "."],
+            'D': ["-", ".", "."] 
+        }
+        self.morse_wait_map = {
+            "-": 0.25,
+            ".": 0.125
+        }
+        self.morse_interchar_wait = 0.05
+
+    def play_string(self, data):
+        for tone in self.morse[data]:
+            self.play('C', 4, self.morse_wait_map[tone])
+            self.wait(self.morse_interchar_wait)
     
     def play(self, note = 0, octave = 0, lenght = 0):
         self.buzzer.duty_cycle = BUZZER_DC_ON
@@ -117,6 +133,9 @@ class Notificator:
             self.buzzer.play('F', 3, 0.5)
             self.buzzer.wait(0.1)
             self.buzzer.play('F', 3, 0.5)            
+
+    def announceString(self, data):
+        self.buzzer.play_string(data)
             
 class SessionHandler(HandlerBase):
     def __init__(self, context, notificator):
@@ -158,8 +177,9 @@ class SessionHandler(HandlerBase):
                 self.context.session_active = True
     
 class ControlHandler(HandlerBase):
-    def __init__(self, context):
+    def __init__(self, context, notificator):
         self.context = context
+        self.notificator = notificator
         self.keyboard = Keyboard(usb_hid.devices)
 
         self.STATE_IDLE = 0
@@ -188,15 +208,19 @@ class ControlHandler(HandlerBase):
 
             if button_a:
                 self.performSingleKeyStroke(Keycode.SPACEBAR)
+                self.notificator.announceString('A')
                 log.print("Pressing A")
             elif button_b:
                 self.performSingleKeyStroke(Keycode.RIGHT_ARROW)
+                self.notificator.announceString('B')
                 log.print("Pressing B")
             elif button_c:
                 self.performSingleKeyStroke(Keycode.LEFT_ARROW)
+                self.notificator.announceString('C')
                 log.print("Pressing C")
             elif button_d:
                 self.performSingleKeyStroke(Keycode.P)
+                self.notificator.announceString('D')
                 log.print("Pressing D")
 
             self.state = self.STATE_PRESSED
@@ -303,7 +327,7 @@ def main():
     notificator = Notificator()
     button_handler = ButtonHandler(context)
     session_handler = SessionHandler(context, notificator)
-    control_handler = ControlHandler(context)
+    control_handler = ControlHandler(context, notificator)
     server_handler = ServerHandler(context)
 
     button_handler.subscribe_observer(session_handler)

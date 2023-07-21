@@ -14,15 +14,6 @@ import wifi
 import socketpool
 
 
-try:
-    if not wifi.radio.ap_active:
-        wifi.radio.start_ap("apabcdef", "rpipico1234")
-
-    pool = socketpool.SocketPool(wifi.radio)
-    server = Server(pool, "/static", debug=True)
-except Exception as e:
-    print(f'Could get AP or WiFi module ready: {e}')
-
 SESSION_MAX_TIME = 60 * 60 * 18
 #SESSION_MAX_TIME = 60
 SESSION_TIME_SLEEP = 0.5
@@ -162,7 +153,6 @@ class ControlHandler(HandlerBase):
 
     def on_notify(self, button_status):
         vt, button_a, button_b, button_c, button_d = button_status
-        print("ALSDKASKD")
 
         if self.context.session_active is False:
             return
@@ -219,7 +209,6 @@ class ButtonHandler:
         
     def run(self):
         self.notify_observers()
-        print("Ñasdf")
 
     def get_keystrokes(self):
         return (self.vt.value, self.button_a.value, self.button_b.value, self.button_c.value, self.button_d.value)
@@ -230,38 +219,51 @@ class ButtonHandler:
     def notify_observers(self):
         for observer in self.observers:
             observer.on_notify(self.get_keystrokes())
-            
-server.start(str(wifi.radio.ipv4_address_ap))
-print(f'Serving Access Point at {wifi.radio.ipv4_address_ap}')
+          
 
-@server.route("/")
-def base(request: Request):
-    """
-    Serve a default static plain text message.
-    """
-    return Response(request, "Hello from the CircuitPython HTTP Server!")
+class ServerHandler:
+    def __init__(self):
+        try:
+            if not wifi.radio.ap_active:
+                wifi.radio.start_ap("apabcdef", "rpipico1234")
+
+            self.pool = socketpool.SocketPool(wifi.radio)
+            self.server = Server(self.pool, "/static", debug=True)
+        except Exception as e:
+            print(f'Could get AP or WiFi module ready: {e}')
+
+        self.server.start(str(wifi.radio.ipv4_address_ap))
+        print(f'Serving Access Point at {wifi.radio.ipv4_address_ap}')
+
+        @self.server.route("/")
+        def base(request: Request):
+            """
+            Serve a default static plain text message.
+            """
+            return Response(request, "Hello from the CircuitPython HTTP Server!")
+
+    def run(self):
+        self.server.poll()
     
-async def main(): 
+def main(): 
     context = Context()
     notificator = Notificator()
     button_handler = ButtonHandler(context)
     session_handler = SessionHandler(context, notificator)
     control_handler = ControlHandler(context)
+    server_handler = ServerHandler()
 
     button_handler.subscribe_observer(session_handler)
     button_handler.subscribe_observer(control_handler)
 
     while True:
         try:
-            print("startin")
             session_handler.run()
-            print("after session")
             button_handler.run()
-            print("after handler")
-            ret = server.poll()
+            server_handler.run()
         except Exception as e:
             print(f"E: {e}")
             pass
 
 
-asyncio.run(main())
+main()

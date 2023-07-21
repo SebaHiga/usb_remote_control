@@ -1,4 +1,5 @@
 import time
+import re
 import usb_hid
 from adafruit_hid.keyboard import Keyboard
 from adafruit_hid.keycode import Keycode
@@ -8,6 +9,9 @@ import digitalio
 import asyncio
 import pwmio
 import time
+
+import wifi
+import socketpool
 
 SESSION_MAX_TIME = 60 * 60 * 24
 #SESSION_MAX_TIME = 60
@@ -20,6 +24,19 @@ BT_B_PIN = board.GP4
 BT_C_PIN = board.GP3
 BT_D_PIN = board.GP2
 BUZZER_PIN = board.GP11
+
+
+try:
+    addr = socketpool.SocketPool(wifi.radio).getaddrinfo('0.0.0.0', 80)[0][-1]
+    wifi.radio.enabled = True
+    wifi.radio.start_ap("apabcdef", "rpipico1234")
+    server_socket = socketpool.SocketPool(wifi.radio).socket()
+    server_socket.bind(addr)
+    server_socket.listen(1)
+
+except Exception as e:
+    import microcontroller
+    print(f'exception {e}')
 
 class Context:
     def __init__(self):
@@ -77,12 +94,6 @@ class Notificator:
     async def announce(self, type):
         if type is ANNOUNCE_INIT:
             await self.buzzer.play('G', 3, 0.05)
-            await self.buzzer.play('A', 3, 0.05)
-            await self.buzzer.play('B', 3, 0.05)
-            await self.buzzer.play('C', 4, 0.05)
-            await self.buzzer.play('D', 4, 0.05)
-            await self.buzzer.play('E', 4, 0.05)
-            await self.buzzer.play('F#', 4, 0.05)
             await self.buzzer.play('G', 4, 0.05)
         if type is ANNOUNCE_ARM:
             await self.buzzer.play('G', 3, 0.1)
@@ -94,12 +105,6 @@ class Notificator:
             await self.buzzer.wait(0.1)
             await self.buzzer.play('F', 3, 0.5)            
         if type is ANNOUNCE_TEST:
-            await self.buzzer.play('G', 3, 0.05)
-            await self.buzzer.play('A', 3, 0.05)
-            await self.buzzer.play('B', 3, 0.05)
-            await self.buzzer.play('C', 4, 0.05)
-            await self.buzzer.play('D', 4, 0.05)
-            await self.buzzer.play('E', 4, 0.05)
             await self.buzzer.play('F#', 4, 0.05)
             await self.buzzer.play('G', 4, 0.05)
             
@@ -251,7 +256,84 @@ async def main():
     button_handler_task = asyncio.create_task(button_handler.run())
     await asyncio.gather(session_task, button_handler_task)
 
-asyncio.run(main())
-    
+def sendall(client, data):
+    data = data.replace('  ', ' ')
+    while len(data):
+        # split data in chunks to avoid EAGAIN exception
+        part = data[0:512]
+        data = data[len(part):len(data)]
+        print('Sending: ' + str(len(part)) + 'b')
+        # EAGAIN too much data exception catcher
+        while True:
+            try:
+                client.sendall(part)
+            except OSError as e:
+                print("Exception", str(e))
+                time.sleep(0.25)
+                pass
+            break
 
+def send_header(client, status_code=200, content_length=None):
+    sendall(client, "HTTP/1.0 {} OK\r\n".format(status_code))
+    sendall(client, "Content-Type: text/html\r\n")
+    if content_length is not None:
+        sendall(client, "Content-Length: {}\r\n".format(content_length))
+    sendall(client, "\r\n")
 
+def send_response(client, payload, status_code=200):
+    content_length = len(payload)
+    send_header(client, status_code, content_length)
+    if content_length > 0:
+        sendall(client, payload)
+    client.close()
+
+while True:
+    # EAGAIN exception catcher
+    print("f")
+    while True:
+        try:
+            client, addr = server_socket.accept()
+        except OSError as e:
+            print("Exception", str(e))
+            time.sleep(0.25)
+            pass
+        break
+
+    print('Client connected - %s:%s' % addr)
+    try:
+        client.settimeout(5)
+
+        request = b""
+        try:
+            while "\r\n\r\n" not in request:
+                buffer = bytearray(512)
+                client.recv_into(buffer, 512)
+                request += buffer
+                print('Received data')
+        except OSError:
+            pass
+
+        # Handle form data from Safari on macOS and iOS; it sends \r\n\r\nssid=<ssid>&password=<password>
+        try:
+            buffer = bytearray(1024)
+            client.recv_into(buffer, 1024)
+            request += buffer
+            print("Received form data after \\r\\n\\r\\n(i.e. from Safari on macOS or iOS)")
+        except OSError:
+            pass
+
+        request = request.decode().strip("\x00").replace('%23', '#')
+
+        print("Request is: {}".format(request))
+        if "HTTP" not in request:  # skip invalid requests
+            continue
+
+        url = re.search("(?:GET|POST) (.*?)(?:\\?.*?)? HTTP", request).group(1)
+        print("URL is {}".format(url))
+
+        if url == "/":
+            send_header(client)
+            sendall(client, "hello world")
+
+    finally:
+        client.close()

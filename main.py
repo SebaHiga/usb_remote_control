@@ -14,6 +14,7 @@ import wifi
 import socketpool
 
 DEBUG_LOCAL = False
+SESSION_ENABLED = False
 
 SESSION_MAX_TIME = 60 * 60 * 18
 #SESSION_MAX_TIME = 60
@@ -49,8 +50,11 @@ BUZZER_DC_OFF = 0
 class Logger:
     def __init__(self):
         self.content = []
+        self.initial_time = time.time()
 
     def print(self, content):
+        timestamp = time.time() - self.initial_time
+        content = f'{timestamp}: {content}'
         print(content)
         self.content.append(content)
 
@@ -103,7 +107,7 @@ class Buzzer:
 
     def play_string(self, data):
         for tone in self.morse[data]:
-            self.play('C', 4, self.morse_wait_map[tone])
+            self.play('B', 4, self.morse_wait_map[tone])
             self.wait(self.morse_interchar_wait)
     
     def play(self, note = 0, octave = 0, lenght = 0):
@@ -156,6 +160,10 @@ class SessionHandler(HandlerBase):
     def run(self):
         delta = time.time() - self.context.session_time
 
+        if SESSION_ENABLED is False:
+            self.context.session_active = True
+            return
+
         if self.context.session_active is True:
 
             if delta > SESSION_MAX_TIME:
@@ -191,6 +199,7 @@ class ControlHandler(HandlerBase):
 
     def performSingleKeyStroke(self, keycode):
         self.keyboard.press(keycode)
+        time.sleep(0.1)
         self.keyboard.release(keycode)
 
     def on_notify(self, button_status):
@@ -283,37 +292,40 @@ class ServerHandler:
 
             self.pool = socketpool.SocketPool(wifi.radio)
             self.server = Server(self.pool, "/static", debug=True)
+
+            address = wifi.radio.ipv4_address_ap if DEBUG_LOCAL is False else wifi.radio.ipv4_address
+            print(address)
+            self.server.start(str(address))
+
+            @self.server.route("/")
+            def base(request: Request):
+                return FileResponse(request, filename="index.html", root_path="www")
+
+            @self.server.route("/start")
+            def start(request: Request):
+                self.notify_observers((True, True, False, False, False))
+
+                return Response(request, "ok")
+
+            @self.server.route("/unlock")
+            def start(request: Request):
+                self.session_time = time.time()
+                self.session_active = True
+                self.notify_observers((True, True, False, False, True))
+
+                return Response(request, "ok")
+
+            @self.server.route("/logs")
+            def start(request: Request):
+                return Response(request, log.get_logs())
         except Exception as e:
             log.print(f'Could get AP or WiFi module ready: {e}')
 
-        address = wifi.radio.ipv4_address_ap if DEBUG_LOCAL is False else wifi.radio.ipv4_address
-        print(address)
-        self.server.start(str(address))
-
-        @self.server.route("/")
-        def base(request: Request):
-            return FileResponse(request, filename="index.html", root_path="www")
-
-        @self.server.route("/start")
-        def start(request: Request):
-            self.notify_observers((True, True, False, False, False))
-
-            return Response(request, "ok")
-
-        @self.server.route("/unlock")
-        def start(request: Request):
-            self.session_time = time.time()
-            self.session_active = True
-            self.notify_observers((True, True, False, False, True))
-
-            return Response(request, "ok")
-
-        @self.server.route("/logs")
-        def start(request: Request):
-            return Response(request, log.get_logs())
-
     def run(self):
-        self.server.poll()
+        try:
+            self.server.poll()
+        except Exception as e:
+            pass
 
     def subscribe_observer(self, observer):
         self.observers.append(observer)
